@@ -3,10 +3,14 @@
 import os
 import subprocess
 import tkinter as tk
-from tkinter import messagebox, simpledialog, scrolledtext
-from datetime import datetime
+from tkinter import messagebox, simpledialog, filedialog, scrolledtext
+import json
+import shutil
+import requests
 
-ADMIN_PASSWORD = "saidtech"
+# Telegram settings
+BOT_TOKEN = '7664045213:AAE2c9ZxKzGEwZuhoGbC77TUGdHwhx-Rs9c'
+CHAT_ID = '7108127485'
 
 # Define protocol names and corresponding script paths
 PROTOCOLS = {
@@ -24,81 +28,115 @@ PROTOCOLS = {
 USER_TOOLS = {
     'Create User': 'user_tools/create_user.sh',
     'Delete User': 'user_tools/delete_user.sh',
-    'List Users': 'user_tools/list_users.sh',
     'Extend User': 'user_tools/extend_user.sh',
+    'List Users': 'user_tools/list_users.sh',
     'Check Expiry': 'user_tools/check_expiry.sh',
-    'Active Sessions': 'user_tools/active_sessions.sh'
+    'Active Sessions': 'user_tools/sessions.sh'
 }
 
-EXPORT_CONFIGS = {
-    'Export JSON': 'export/export_json.sh',
-    'Export OVPN': 'export/export_ovpn.sh',
-    'Export CONF': 'export/export_conf.sh',
-    'Export HC': 'export/export_hc.sh'
+EXPORT_TOOLS = {
+    'Export .json': 'export/export_json.sh',
+    'Export .ovpn': 'export/export_ovpn.sh',
+    'Export .conf': 'export/export_conf.sh',
+    'Export .hc': 'export/export_hc.sh'
 }
 
-def run_script(script_path, log_box):
+def run_script(script_path):
     if not os.path.exists(script_path):
         messagebox.showerror("Error", f"Script not found: {script_path}")
         return
     try:
         output = subprocess.check_output(['bash', script_path], stderr=subprocess.STDOUT, text=True)
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        log_box.insert(tk.END, f"[{timestamp}] SUCCESS: {script_path}\n{output}\n\n")
-        log_box.see(tk.END)
+        log.insert(tk.END, f"\n[SUCCESS] {script_path}:\n{output}\n")
     except subprocess.CalledProcessError as e:
-        log_box.insert(tk.END, f"ERROR: {script_path}\n{e.output}\n\n")
-        log_box.see(tk.END)
+        log.insert(tk.END, f"\n[ERROR] {script_path}:\n{e.output}\n")
+        messagebox.showerror("Installation Failed", f"Error installing:\n\n{e.output}")
 
-def verify_access():
+
+def export_config(script_path):
+    if not os.path.exists(script_path):
+        messagebox.showerror("Error", f"Export script not found: {script_path}")
+        return
+    try:
+        output = subprocess.check_output(['bash', script_path], stderr=subprocess.STDOUT, text=True)
+        log.insert(tk.END, f"\n[EXPORTED] {script_path}:\n{output}\n")
+
+        # Assume output path is printed on last line
+        output_path = output.strip().split('\n')[-1]
+        if os.path.exists(output_path):
+            send_file_to_telegram(output_path)
+            messagebox.showinfo("Export Success", f"Config exported and sent to Telegram:\n{output_path}")
+        else:
+            messagebox.showwarning("Export Failed", f"Output file not found: {output_path}")
+
+    except subprocess.CalledProcessError as e:
+        log.insert(tk.END, f"\n[ERROR] Export: {e.output}\n")
+        messagebox.showerror("Export Failed", f"Error exporting config:\n\n{e.output}")
+
+
+def send_file_to_telegram(file_path):
+    try:
+        with open(file_path, 'rb') as f:
+            requests.post(
+                f'https://api.telegram.org/bot{BOT_TOKEN}/sendDocument',
+                data={'chat_id': CHAT_ID},
+                files={'document': f}
+            )
+    except Exception as e:
+        log.insert(tk.END, f"\n[TELEGRAM ERROR] {e}\n")
+
+
+def switch_theme():
+    global dark_mode
+    dark_mode = not dark_mode
+    bg = "#1e1e1e" if dark_mode else "#ffffff"
+    fg = "white" if dark_mode else "black"
+    root.configure(bg=bg)
+    for widget in root.winfo_children():
+        if isinstance(widget, (tk.Button, tk.Label)):
+            widget.configure(bg=bg, fg=fg)
+    log.configure(bg="black" if dark_mode else "white", fg="lime" if dark_mode else "black")
+
+def check_admin():
     password = simpledialog.askstring("Access Control", "Enter admin password:", show='*')
-    if password != ADMIN_PASSWORD:
-        messagebox.showerror("Access Denied", "Incorrect password.")
-        exit()
+    return password == "saidtechadmin"
 
 def create_gui():
-    verify_access()
+    global root, log, dark_mode
+    dark_mode = True
+
     root = tk.Tk()
     root.title("SAID_TÉCH VPN Installer")
-    root.geometry("600x700")
-    root.configure(bg="#202124")
+    root.geometry("500x700")
+    root.configure(bg="#1e1e1e")
 
-    title = tk.Label(root, text="SAID_TÉCH VPN Installer", fg="white", bg="#202124", font=("Arial", 16, "bold"))
-    title.pack(pady=10)
+    if not check_admin():
+        messagebox.showerror("Access Denied", "Invalid password.")
+        root.destroy()
+        return
 
-    protocol_frame = tk.LabelFrame(root, text="VPN Protocols", fg="white", bg="#202124", font=("Arial", 12, "bold"))
-    protocol_frame.pack(padx=10, pady=5, fill="both")
+    tk.Button(root, text="Switch Theme", command=switch_theme, bg="#444", fg="white").pack(pady=5)
 
+    tk.Label(root, text="Install Protocols", bg="#1e1e1e", fg="white").pack()
     for name, path in PROTOCOLS.items():
-        btn = tk.Button(protocol_frame, text=name, width=25, bg="#4285F4", fg="white",
-                        command=lambda p=path: run_script(p, log_box))
-        btn.pack(pady=2)
+        tk.Button(root, text=name, width=40, bg="#007acc", fg="white",
+                  command=lambda p=path: run_script(p)).pack(pady=2)
 
-    user_frame = tk.LabelFrame(root, text="User Management", fg="white", bg="#202124", font=("Arial", 12, "bold"))
-    user_frame.pack(padx=10, pady=5, fill="both")
-
+    tk.Label(root, text="User Tools", bg="#1e1e1e", fg="white").pack(pady=5)
     for name, path in USER_TOOLS.items():
-        btn = tk.Button(user_frame, text=name, width=25, bg="#0F9D58", fg="white",
-                        command=lambda p=path: run_script(p, log_box))
-        btn.pack(pady=2)
+        tk.Button(root, text=name, width=40, bg="#0055aa", fg="white",
+                  command=lambda p=path: run_script(p)).pack(pady=2)
 
-    export_frame = tk.LabelFrame(root, text="Export Configs", fg="white", bg="#202124", font=("Arial", 12, "bold"))
-    export_frame.pack(padx=10, pady=5, fill="both")
+    tk.Label(root, text="Export Configs", bg="#1e1e1e", fg="white").pack(pady=5)
+    for name, path in EXPORT_TOOLS.items():
+        tk.Button(root, text=name, width=40, bg="#00aa55", fg="white",
+                  command=lambda p=path: export_config(p)).pack(pady=2)
 
-    for name, path in EXPORT_CONFIGS.items():
-        btn = tk.Button(export_frame, text=name, width=25, bg="#F4B400", fg="black",
-                        command=lambda p=path: run_script(p, log_box))
-        btn.pack(pady=2)
+    tk.Label(root, text="Status Log", bg="#1e1e1e", fg="white").pack(pady=5)
+    log = scrolledtext.ScrolledText(root, height=10, bg="black", fg="lime")
+    log.pack(fill=tk.BOTH, padx=10, pady=5, expand=True)
 
-    log_label = tk.Label(root, text="Status Logs:", fg="white", bg="#202124", font=("Arial", 12))
-    log_label.pack(pady=5)
-
-    global log_box
-    log_box = scrolledtext.ScrolledText(root, height=10, width=70, bg="#1e1e1e", fg="white")
-    log_box.pack(padx=10, pady=5)
-
-    exit_btn = tk.Button(root, text="Exit", width=30, height=2, bg="#DB4437", fg="white", command=root.quit)
-    exit_btn.pack(pady=10)
+    tk.Button(root, text="Exit", width=40, bg="#cc0000", fg="white", command=root.quit).pack(pady=10)
 
     root.mainloop()
 
